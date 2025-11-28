@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from qdrant_client import QdrantClient, models
-from ..data_models import DataPoint
+from backend.src.data_models import DataPoint
 from typing import List
 import uuid
 from loguru import Logger

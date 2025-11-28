@@ -1,0 +1,25 @@
+version: "3.9"
+
+services:
+  backend:
+    build: ./backend
+    container_name: gradbot-backend
+    ports:
+      - "8000:8000"
+    networks:
+      - gradnet
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: gradbot-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - gradnet
+
+networks:
+  gradnet:
+    driver: bridge
