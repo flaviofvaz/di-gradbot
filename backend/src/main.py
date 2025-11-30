@@ -60,5 +60,10 @@ async def remove_document(filename: str):
 
 @app.post("/chat/interact")
 async def chat_interaction(messages: List[Dict[str, str]]):
-    print(messages)
+    print(messages[-1])
     return {"message": "i'm a mock"}
+
+
+@app.get("/documents/list")
+async def list_documents():
+    return {"local_documents": list(indexed_files.keys())}
