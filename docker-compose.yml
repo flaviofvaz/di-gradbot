@@ -6,6 +6,7 @@ services:
       - "8000:8000"
     environment:
       QDRANT_URL: "http://qdrant:6333"
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
     depends_on:
       - qdrant
     networks:
@@ -33,6 +34,8 @@ services:
       - 6333
       - 6334
       - 6335
+    volumes:
+      - ./qdrant_data:/qdrant/storage
     configs:
       - source: qdrant_config
         target: /qdrant/config/production.yaml

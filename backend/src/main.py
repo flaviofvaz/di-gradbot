@@ -1,15 +1,34 @@
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-import uuid
 import shutil
 import os
+import uuid
 from typing import List, Dict
+from .ingestion.chunking import MarkdownChunker
+from .ingestion.extraction import DoclingExtractor
+from .ingestion.ingest import IndexManager
+from .ingestion.embeddings import OpenAiEmbedder
+from .ingestion.vector_db import QdrantVectorDatabase
+from .llm import OpenAiLlm
+from .chatbot import ChatBot
 
 
-indexed_files = {}
-local_filepaths = "./saved_files/"
+local_filepaths = "./saved_files"
+collection_name = "grad_documents"
+
+# Initialization of Ingestion and ChatBot components
+extractor = DoclingExtractor()
+chunker = MarkdownChunker()
+embedder = OpenAiEmbedder()
+# The Qdrant URL is read from an environment variable
+vector_db = QdrantVectorDatabase(url=os.environ["QDRANT_URL"])
+llm = OpenAiLlm()
+index_manager = IndexManager(extractor=extractor, chunker=chunker, embedder=embedder, vector_db=vector_db, collection_name=collection_name)
+chat_bot = ChatBot(embedder=embedder, vector_db=vector_db, llm=llm, collection_name=collection_name)
+
 
 app = FastAPI()
+# CORS Middleware Configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -21,49 +40,96 @@ app.add_middleware(
 
 @app.get("/health")
 async def health_check():
+    """
+        Checks the health of the API.
+        Returns:
+            dict: A dictionary containing the API status.
+    """
     return {"status": "api is alive!"}
 
 
 @app.post("/documents/insert")
 async def insert_document(file: UploadFile = File(...)):
+    """
+        Inserts a new document into the index for use by the chatbot.
+        Saves the file locally, checks if it's already indexed, and processes it for
+        extraction, chunking, embedding, and insertion into the vector database.
+        Args:
+            file (UploadFile): The file to be uploaded and indexed.
+
+        Returns:
+            dict: A dictionary containing the filename and the status of the operation.
+    """
     # ensure files can be saved - directory exists
     if not os.path.isdir(local_filepaths):
         os.mkdir(local_filepaths)
+
     # file already indexed -  need to remove it and re-add it if you want to re-index it
+    indexed_files = await index_manager.list_stored_files()
     if file.filename in indexed_files:
         return {"filename": file.filename, "message": "file already indexed."}
 
     # define the path where you want to save the file
-    file_location = f"{local_filepaths}/{file.filename}"
+    file_location = os.path.join(local_filepaths, file.filename)
     try:
         with open(file_location, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
     finally:
         await file.close()
-        indexed_files[file.filename] = uuid.uuid4().hex
 
-    # TODO: index file
+    status = await index_manager.insert([(file_location, uuid.uuid4())])
+    # Remove the local file after ingestion, regardless of success
+    if not status[0]:
+        os.remove(file_location)
+        return {"filename": file.filename, "message": "Failed to insert file."}
+    os.remove(file_location)
     return {"filename": file.filename, "message": "file indexed successfully"}
 
 
 @app.post("/documents/remove")
 async def remove_document(filename: str):
+    """
+        Removes a document from the vector database index.
+        Checks if the file is indexed before attempting to remove it.
+        Args:
+            filename (str): The name of the file to be removed.
+        Returns:
+            dict: A dictionary containing the filename and the status of the operation.
+    """
+    indexed_files = await index_manager.list_stored_files()
     if filename in indexed_files:
-        os.remove(f"{local_filepaths}/{filename}")
-        # TODO: remove chunks from vector database
-
-        del indexed_files[filename]
-        return {"filename": filename, "message": "removed successfully."}
+        status = await index_manager.remove([filename])
+        if status[0]:
+            return {"filename": filename, "message": "removed successfully."}
+        else:
+            return {"filename": filename, "message": "failed to remove file."}
     else:
         return {"filename": filename, "message": "file not found."}
 
 
 @app.post("/chat/interact")
 async def chat_interaction(messages: List[Dict[str, str]]):
-    print(messages[-1])
-    return {"message": "i'm a mock"}
+    """
+        Facilitates chat interaction with the Large Language Model (LLM) and
+        Retrieval-Augmented Generation (RAG) search on the indexed documents.
+        Args:
+            messages (List[Dict[str, str]]): A list of messages in the format
+                `[{"role": "user/bot", "content": "..."}]` representing
+                the conversation history, including the new user message.
+        Returns:
+            dict: A dictionary containing the response generated by the `ChatBot`.
+    """
+    msg = await chat_bot.interact(messages)
+    return {"message": msg}
 
 
 @app.get("/documents/list")
 async def list_documents():
-    return {"local_documents": list(indexed_files.keys())}
+    """
+        Lists all filenames that have been indexed in the vector database.
+        Returns:
+            dict: A dictionary with the key "local_documents" containing the list
+                of indexed filenames.
+    """
+    indexed_files = await index_manager.list_stored_files()
+    return {"local_documents": indexed_files}
