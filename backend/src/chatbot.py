@@ -35,7 +35,7 @@ class ChatBot:
             * **Priorize a Informação do contexto:** A resposta DEVE ser baseada exclusivamente nas informações contidas no contexto. Não utilize conhecimento prévio, nem mesmo que pareça correto, se ele não estiver explicitamente suportado no texto fornecido.
             * **Clareza e Precisão:** Seja direto, claro e preciso.
             * **Mantenha o Foco:** Responda apenas o que foi perguntado.
-            * **Citação:** Se a informação puder ser atribuída a um parágrafo ou seção específica no contexto, faça a citação no final da resposta, conforme o formato do contexto (ex: "Ver Seção 3.2 do Regimento").
+            * **Citação:** Se a informação puder ser atribuída a um parágrafo ou seção específica no contexto, faça a citação no final da resposta, conforme o formato do contexto (exemplo: "Ver Seção 3.2 do documento Regimento.pdf").
             * **Caso de Informação Ausente:** Se a resposta para a pergunta não puder ser encontrada **de forma alguma** no contexto fornecidos, você deve responder educadamente: "Não encontrei informações suficientes sobre este tópico nos documentos normativos fornecidos. Por favor, reformule a pergunta ou consulte o site do Departamento de Informática ou a Secretaria do Programa de Pós-Graduação da PUC-Rio."
             
             **3. Fonte de Informação (Contexto):**
@@ -48,6 +48,10 @@ class ChatBot:
             {query}
             
             **5. Resposta:**
+        """
+        self._chunk_template = """
+            Contexto: {context}
+            Fonte: {source}
         """
 
     async def interact(self, messages: List[Dict[str, str]]) -> str:
@@ -71,10 +75,11 @@ class ChatBot:
 
         # retrieve relevant chunks
         chunks = await self._vector_db.retrieve(collection_name=self._collection_name, query_vector=vector[0])
+        chunks_with_source = [self._chunk_template.format(context=c.payload["chunk_text"], source=c.payload["document_name"]) for c in chunks]
 
         # format prompt
         prompt = self._prompt_template.format(
-            chunks="\n".join(c.payload["chunk_text"] for c in chunks),
+            chunks="\n".join(chunks_with_source),
             query=text_message
         )
         # llm complete
